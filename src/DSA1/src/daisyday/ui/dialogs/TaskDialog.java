@@ -7,6 +7,7 @@ import DSA1.src.daisyday.ui.Session;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JDialog;
@@ -42,6 +43,8 @@ import static DSA1.src.daisyday.ui.UiFactory.section;
 /** Form for creating a task or editing an existing one. */
 public class TaskDialog extends JDialog {
 
+    private static final String STATUS_COMPLETED = Task.COMPLETED;
+
     private final Session session;
     private final Database database;
     private final Task existing;
@@ -55,6 +58,7 @@ public class TaskDialog extends JDialog {
     private final JButton dateButton;
     private final JSpinner start;
     private final JSpinner end;
+    private final JCheckBox requiresProof = new JCheckBox("This task requires proof");
     private final JLabel proofName = new JLabel();
 
     private LocalDate date;
@@ -97,6 +101,9 @@ public class TaskDialog extends JDialog {
             priority.setSelectedItem(existing.getPriority());
         }
 
+        requiresProof.setSelected(editing && existing.isRequiresProof());
+        requiresProof.setBackground(Color.WHITE);
+
         proofName.setText(proof == null ? "No proof attached" : proof.getName());
 
         JPanel root = section(getTitle(), buildForm());
@@ -123,7 +130,11 @@ public class TaskDialog extends JDialog {
         formRow(form, 5, "Priority", priority);
         formRow(form, 6, "Status", status);
 
-        if (editing) {
+        // Whether a task needs proof is chosen only when it is created.
+        // Attaching the proof happens afterwards, in the task details.
+        if (!editing) {
+            formRow(form, 7, "Proof", requiresProof);
+        } else if (existing.isRequiresProof()) {
             formRow(form, 7, "Attachment", buildProofPanel());
         }
         return form;
@@ -237,6 +248,14 @@ public class TaskDialog extends JDialog {
             return;
         }
 
+        boolean needsProof = editing ? existing.isRequiresProof() : requiresProof.isSelected();
+        if (needsProof && STATUS_COMPLETED.equals(status.getSelectedItem())
+                && (proof == null || !proof.isFile())) {
+            JOptionPane.showMessageDialog(this,
+                    "This task requires proof. Attach a file before marking it as Completed.");
+            return;
+        }
+
         Task t = editing ? existing : new Task();
         t.setTitle(title.getText().trim());
         t.setCategory((String) category.getSelectedItem());
@@ -245,7 +264,8 @@ public class TaskDialog extends JDialog {
         t.setDate(date);
         t.setStart(startValue);
         t.setEnd(endValue);
-        t.setProof(proof);
+        t.setRequiresProof(needsProof);
+        t.setProof(needsProof ? proof : null);
 
         try {
             database.tasks().save(session.getAccountId(), t);

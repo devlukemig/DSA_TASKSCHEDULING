@@ -22,6 +22,7 @@ public class Task {
     private LocalDate date;
     private LocalTime start;
     private LocalTime end;
+    private boolean requiresProof;
     private File proof;
 
     public Long getId() {
@@ -90,6 +91,14 @@ public class Task {
 
     public void setEnd(LocalTime end) {
         this.end = end;
+    }
+
+    public boolean isRequiresProof() {
+        return requiresProof;
+    }
+
+    public void setRequiresProof(boolean requiresProof) {
+        this.requiresProof = requiresProof;
     }
 
     public File getProof() {
