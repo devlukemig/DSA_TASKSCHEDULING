@@ -125,6 +125,56 @@ public class AccountRepository {
         }
     }
 
+    /** How many tasks are filed under this category. */
+    public int countTasksInCategory(long accountId, String name) {
+        String sql = "SELECT COUNT(*) FROM tasks t JOIN categories c ON c.id = t.category_id "
+                + "WHERE t.account_id = ? AND c.name = ?";
+
+        try (PreparedStatement statement = database.connection().prepareStatement(sql)) {
+            statement.setLong(1, accountId);
+            statement.setString(2, name);
+            try (ResultSet result = statement.executeQuery()) {
+                result.next();
+                return result.getInt(1);
+            }
+        } catch (SQLException e) {
+            throw new DataAccessException("Could not count the tasks in the category", e);
+        }
+    }
+
+    /** Deletes the category and every task filed under it. */
+    public void deleteCategory(long accountId, String name) {
+        Connection connection = database.connection();
+        String deleteTasks = "DELETE FROM tasks WHERE account_id = ? AND category_id = "
+                + "(SELECT id FROM categories WHERE account_id = ? AND name = ?)";
+        String deleteCategory = "DELETE FROM categories WHERE account_id = ? AND name = ?";
+
+        try {
+            connection.setAutoCommit(false);
+            try (PreparedStatement tasks = connection.prepareStatement(deleteTasks);
+                 PreparedStatement category = connection.prepareStatement(deleteCategory)) {
+
+                tasks.setLong(1, accountId);
+                tasks.setLong(2, accountId);
+                tasks.setString(3, name);
+                tasks.executeUpdate();
+
+                category.setLong(1, accountId);
+                category.setString(2, name);
+                category.executeUpdate();
+
+                connection.commit();
+            } catch (SQLException e) {
+                connection.rollback();
+                throw e;
+            } finally {
+                connection.setAutoCommit(true);
+            }
+        } catch (SQLException e) {
+            throw new DataAccessException("Could not delete the category", e);
+        }
+    }
+
     // ---------- weekly goal ----------
 
     /** The number of tasks the user wants to complete each week, if they set one. */

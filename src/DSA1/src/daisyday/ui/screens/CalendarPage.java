@@ -5,12 +5,14 @@ import DSA1.src.daisyday.model.Task;
 import DSA1.src.daisyday.ui.AppController;
 import DSA1.src.daisyday.ui.Session;
 import DSA1.src.daisyday.ui.components.MonthPanel;
+import DSA1.src.daisyday.util.TextFormat;
 import DSA1.src.daisyday.util.TimeFormat;
 
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
+import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.SwingConstants;
@@ -127,7 +129,9 @@ public class CalendarPage extends Page {
 
         JPanel details = new JPanel(new GridLayout(2, 1));
         details.setOpaque(false);
-        details.add(label(t.getCategory(), 13));
+        JLabel category = label(TextFormat.shorten(t.getCategory(), 18), 13);
+        category.setToolTipText(t.getCategory());
+        details.add(category);
         details.add(label(
                 TimeFormat.time(t.getStart()) + " - " + TimeFormat.time(t.getEnd()),
                 11

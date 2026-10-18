@@ -85,14 +85,14 @@ public class LoginScreen extends AuthScreen {
 
         try {
             if (name.isEmpty() || entered.length == 0) {
-                app.message("Please enter your username and password.");
+                app.warn("Please enter your username and password.");
                 return;
             }
 
             OptionalLong accountId = database.accounts().authenticate(name, entered);
 
             if (accountId.isEmpty()) {
-                app.message("Incorrect username or password.");
+                app.error("Incorrect username or password.");
                 return;
             }
 
@@ -101,9 +101,10 @@ public class LoginScreen extends AuthScreen {
             resetPassword();
             app.refreshAll();
             app.showScreen(Screen.DASHBOARD);
+            app.success("Welcome Back", "You are now logged in as " + name + ".");
 
         } catch (DataAccessException e) {
-            app.message(e.getMessage());
+            app.error(e.getMessage());
 
         } finally {
             Arrays.fill(entered, '\0');

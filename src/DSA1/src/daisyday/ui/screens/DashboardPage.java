@@ -12,6 +12,7 @@ import DSA1.src.daisyday.ui.components.GoalBar;
 import DSA1.src.daisyday.ui.components.HorizontalBarChart;
 import DSA1.src.daisyday.ui.components.RowLayout;
 import DSA1.src.daisyday.ui.components.WeekBarChart;
+import DSA1.src.daisyday.ui.dialogs.WeeklyGoalDialog;
 import DSA1.src.daisyday.util.TimeFormat;
 
 import javax.swing.BorderFactory;
@@ -20,7 +21,6 @@ import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
-import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.Scrollable;
@@ -68,7 +68,6 @@ import static DSA1.src.daisyday.ui.UiFactory.section;
 public class DashboardPage extends Page {
 
     private static final int FOCUS_LIMIT = 4;
-    private static final int MAX_GOAL = 999;
     private static final Color OVERDUE_RED = new Color(190, 30, 30);
     private static final Color DUE_BROWN = new Color(150, 100, 0);
 
@@ -392,7 +391,7 @@ public class DashboardPage extends Page {
 
         JButton edit = link("Edit goal");
         edit.setAlignmentX(Component.LEFT_ALIGNMENT);
-        edit.addActionListener(event -> editWeeklyGoal(custom));
+        edit.addActionListener(event -> editWeeklyGoal(custom, completed + stillDue));
 
         JPanel body = stack(6, 12);
         body.add(left(label(completed + "/" + goal, 30)));
@@ -409,39 +408,28 @@ public class DashboardPage extends Page {
     }
 
     /** Asks how many tasks the user wants to finish each week and saves the answer. */
-    private void editWeeklyGoal(OptionalInt current) {
-        String prompt = "How many tasks do you want to complete each week?\n"
-                + "Enter a whole number from 1 to " + MAX_GOAL
-                + ", or leave it empty to use the automatic goal.";
-
-        Object answer = JOptionPane.showInputDialog(
-                this, prompt, "Weekly Goal", JOptionPane.QUESTION_MESSAGE,
-                null, null, current.isPresent() ? String.valueOf(current.getAsInt()) : "");
-        if (answer == null) {
+    private void editWeeklyGoal(OptionalInt current, int automaticGoal) {
+        WeeklyGoalDialog.Result result = WeeklyGoalDialog.show(this, current, automaticGoal);
+        if (!result.saved()) {
             return; // cancelled
         }
 
-        String text = answer.toString().trim();
-        Integer goal = null;
-        if (!text.isEmpty()) {
-            try {
-                goal = Integer.parseInt(text);
-            } catch (NumberFormatException e) {
-                goal = null;
-            }
-            if (goal == null || goal < 1 || goal > MAX_GOAL) {
-                app.message("Please enter a whole number from 1 to " + MAX_GOAL + ".");
-                return;
-            }
-        }
-
         try {
-            database.accounts().setWeeklyGoal(accountId(), goal);
+            database.accounts().setWeeklyGoal(accountId(), result.goal());
         } catch (DataAccessException e) {
-            app.message(e.getMessage());
+            app.error(e.getMessage());
             return;
         }
+
         app.refreshAll();
+        if (result.goal() == null) {
+            app.success("Weekly Goal Reset",
+                    "Your weekly goal is automatic again. It follows the tasks due this week.");
+        } else {
+            app.success("Weekly Goal Saved",
+                    "You are aiming to complete " + result.goal()
+                            + (result.goal() == 1 ? " task" : " tasks") + " each week.");
+        }
     }
 
     /** Page content that is as wide as the window and as tall as it needs to be. */

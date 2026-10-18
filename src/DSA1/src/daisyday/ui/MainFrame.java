@@ -3,6 +3,7 @@ package DSA1.src.daisyday.ui;
 import DSA1.src.daisyday.data.DataAccessException;
 import DSA1.src.daisyday.data.Database;
 import DSA1.src.daisyday.model.Task;
+import DSA1.src.daisyday.ui.dialogs.Modal;
 import DSA1.src.daisyday.ui.dialogs.TaskDialog;
 import DSA1.src.daisyday.ui.screens.CalendarPage;
 import DSA1.src.daisyday.ui.screens.DashboardPage;
@@ -12,7 +13,6 @@ import DSA1.src.daisyday.ui.screens.TasksPage;
 import DSA1.src.daisyday.ui.screens.WorkspaceScreen;
 
 import javax.swing.JFrame;
-import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import java.awt.CardLayout;
 import java.awt.Dimension;
@@ -74,15 +74,33 @@ public class MainFrame extends JFrame implements AppController {
             tasksPage.refresh();
             calendarPage.refresh();
         } catch (DataAccessException e) {
-            message(e.getMessage());
+            error(e.getMessage());
         }
     }
 
     @Override
     public void message(String text) {
-        JOptionPane.showMessageDialog(
-                this, text, "DaisyDay", JOptionPane.INFORMATION_MESSAGE
-        );
+        Modal.info(this, "DaisyDay", text);
+    }
+
+    @Override
+    public void warn(String text) {
+        Modal.warning(this, text);
+    }
+
+    @Override
+    public void error(String text) {
+        Modal.error(this, text);
+    }
+
+    @Override
+    public void success(String title, String text) {
+        Modal.success(this, title, text);
+    }
+
+    @Override
+    public boolean confirm(String title, String text, String confirmText, boolean danger) {
+        return Modal.confirm(this, title, text, confirmText, danger);
     }
 
     @Override
@@ -95,9 +113,14 @@ public class MainFrame extends JFrame implements AppController {
 
     @Override
     public void logout() {
+        if (!confirm("Log Out", "Are you sure you want to log out?", "Log Out", false)) {
+            return;
+        }
+
         session.logout();
         loginScreen.resetPassword();
         refreshAll();
         showScreen(Screen.LOGIN);
+        success("Logged Out", "You have been logged out successfully. See you soon!");
     }
 }

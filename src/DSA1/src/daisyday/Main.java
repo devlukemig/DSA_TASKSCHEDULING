@@ -2,9 +2,9 @@ package DSA1.src.daisyday;
 
 import DSA1.src.daisyday.data.DataAccessException;
 import DSA1.src.daisyday.data.Database;
+import DSA1.src.daisyday.ui.dialogs.Modal;
 import DSA1.src.daisyday.ui.MainFrame;
 
-import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
 
 public final class Main {
@@ -26,9 +26,7 @@ public final class Main {
         try {
             return Database.open();
         } catch (DataAccessException e) {
-            JOptionPane.showMessageDialog(
-                    null, e.getMessage(), "DaisyDay", JOptionPane.ERROR_MESSAGE
-            );
+            Modal.error(null, e.getMessage());
             return null;
         }
     }

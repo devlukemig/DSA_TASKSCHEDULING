@@ -5,11 +5,12 @@ import DSA1.src.daisyday.data.Database;
 import DSA1.src.daisyday.model.Task;
 import DSA1.src.daisyday.ui.AppController;
 import DSA1.src.daisyday.ui.Session;
+import DSA1.src.daisyday.ui.components.CategoryChips;
+import DSA1.src.daisyday.util.TextFormat;
 
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
-import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextField;
@@ -17,7 +18,6 @@ import javax.swing.SwingConstants;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Dimension;
-import java.awt.FlowLayout;
 import java.awt.GridLayout;
 import java.util.List;
 import java.util.Locale;
@@ -31,12 +31,8 @@ import static DSA1.src.daisyday.ui.UiFactory.section;
 /** Task list (by status) and category management. */
 public class TasksPage extends Page {
 
-    private static final Color[] BADGE_COLORS = {
-            new Color(244, 143, 204),
-            new Color(229, 217, 132),
-            new Color(147, 225, 157),
-            new Color(0, 175, 233)
-    };
+    private static final int MAX_CATEGORY_NAME = 60;
+    private static final int CARD_CATEGORY_LIMIT = 12;
 
     public TasksPage(Session session, Database database, AppController app) {
         super(session, database, app);
@@ -51,7 +47,6 @@ public class TasksPage extends Page {
         body.setOpaque(false);
 
         JPanel categories = section("CATEGORIES", buildCategoryBody());
-        categories.setPreferredSize(new Dimension(600, 115));
         body.add(categories, BorderLayout.NORTH);
         body.add(buildStatusColumns(), BorderLayout.CENTER);
 
@@ -78,25 +73,10 @@ public class TasksPage extends Page {
         categoryBody.setBackground(Color.WHITE);
         categoryBody.setBorder(BorderFactory.createEmptyBorder(6, 6, 6, 6));
 
-        JPanel badges = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        badges.setBackground(Color.WHITE);
+        CategoryChips chips = new CategoryChips(this::deleteCategory);
+        chips.setCategories(database.accounts().findCategories(accountId()));
 
-        List<String> names = database.accounts().findCategories(accountId());
-        for (int i = 0; i < names.size(); i++) {
-            JLabel badge = label(names.get(i), 13);
-            badge.setOpaque(true);
-            badge.setBackground(BADGE_COLORS[i % BADGE_COLORS.length]);
-            badge.setBorder(BorderFactory.createEmptyBorder(3, 15, 3, 15));
-            badges.add(badge);
-        }
-
-        JScrollPane badgeScroll = new JScrollPane(badges);
-        badgeScroll.setBorder(BorderFactory.createEmptyBorder());
-        badgeScroll.setVerticalScrollBarPolicy(
-                JScrollPane.VERTICAL_SCROLLBAR_NEVER
-        );
-
-        categoryBody.add(badgeScroll, BorderLayout.CENTER);
+        categoryBody.add(chips, BorderLayout.CENTER);
         categoryBody.add(buildAddCategoryRow(), BorderLayout.SOUTH);
         return categoryBody;
     }
@@ -121,23 +101,62 @@ public class TasksPage extends Page {
         }
 
         if (name.isEmpty()) {
-            app.message("Enter a category name.");
+            app.warn("Enter a category name.");
+            return;
+        }
+
+        if (name.length() > MAX_CATEGORY_NAME) {
+            app.warn("Category names can be up to " + MAX_CATEGORY_NAME + " characters long.");
             return;
         }
 
         try {
             if (database.accounts().categoryExists(accountId(), name)) {
-                app.message("This category already exists.");
+                app.warn("This category already exists.");
                 return;
             }
             database.accounts().addCategory(accountId(), name);
 
         } catch (DataAccessException e) {
-            app.message(e.getMessage());
+            app.error(e.getMessage());
             return;
         }
 
         app.refreshAll();
+        app.success("Category Added", "\"" + name + "\" was added to your categories.");
+    }
+
+    private void deleteCategory(String name) {
+        if (!session.isLoggedIn()) {
+            return;
+        }
+
+        try {
+            if (database.accounts().findCategories(accountId()).size() <= 1) {
+                app.warn("You need at least one category, so \"" + name + "\" can't be deleted.");
+                return;
+            }
+
+            int taskCount = database.accounts().countTasksInCategory(accountId(), name);
+            String tasks = taskCount + (taskCount == 1 ? " task" : " tasks");
+
+            String question = taskCount == 0
+                    ? "Delete the category \"" + name + "\"?"
+                    : "Delete the category \"" + name + "\"?\nIt has " + tasks
+                            + ", and they will be deleted too. This can't be undone.";
+            if (!app.confirm("Delete Category", question, "Delete", true)) {
+                return;
+            }
+
+            database.accounts().deleteCategory(accountId(), name);
+            app.refreshAll();
+            app.success("Category Deleted", taskCount == 0
+                    ? "\"" + name + "\" was deleted."
+                    : "\"" + name + "\" and its " + tasks + " were deleted.");
+
+        } catch (DataAccessException e) {
+            app.error(e.getMessage());
+        }
     }
 
     // ---------- status columns ----------
@@ -176,9 +195,10 @@ public class TasksPage extends Page {
 
         JButton item = new JButton(
                 "<html><b>" + html(t.getTitle()) + check
-                        + "</b><br>" + html(t.getCategory())
+                        + "</b><br>" + html(TextFormat.shorten(t.getCategory(), CARD_CATEGORY_LIMIT))
                         + "<br>" + t.getDate() + "</html>"
         );
+        item.setToolTipText(t.getCategory());
         item.setHorizontalAlignment(SwingConstants.LEFT);
         item.setBackground(Color.WHITE);
         item.setForeground(HEADER);

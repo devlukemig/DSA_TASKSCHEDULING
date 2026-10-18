@@ -98,26 +98,26 @@ public class RegistrationScreen extends AuthScreen {
 
         try {
             if (name.isEmpty() || first.length == 0 || second.length == 0) {
-                app.message("Please fill out all fields.");
+                app.warn("Please fill out all fields.");
                 return;
             }
 
             int length = Character.codePointCount(first, 0, first.length);
 
             if (length < 8) {
-                app.message("Password must contain at least 8 characters.");
+                app.warn("Password must contain at least 8 characters.");
                 password.getField().requestFocusInWindow();
                 return;
             }
 
             if (!Arrays.equals(first, second)) {
-                app.message("Passwords do not match.");
+                app.warn("Passwords do not match.");
                 confirm.getField().requestFocusInWindow();
                 return;
             }
 
             if (database.accounts().exists(name)) {
-                app.message("This username is already registered.");
+                app.warn("This username is already registered.");
                 return;
             }
 
@@ -129,11 +129,11 @@ public class RegistrationScreen extends AuthScreen {
             confirm.clearAndHide();
             loginScreen.resetPassword();
 
-            app.message("Registration successful! You can now log in.");
             app.showScreen(Screen.LOGIN);
+            app.success("Account Created", "Registration successful! You can now log in.");
 
         } catch (DataAccessException e) {
-            app.message(e.getMessage());
+            app.error(e.getMessage());
 
         } finally {
             Arrays.fill(first, '\0');

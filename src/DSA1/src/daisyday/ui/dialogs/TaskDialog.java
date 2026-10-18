@@ -14,7 +14,6 @@ import javax.swing.JDialog;
 import javax.swing.JFileChooser;
 import javax.swing.JLabel;
 import javax.swing.JMenuItem;
-import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JSpinner;
@@ -217,7 +216,7 @@ public class TaskDialog extends JDialog {
         if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
             File selected = chooser.getSelectedFile();
             if (!selected.isFile()) {
-                JOptionPane.showMessageDialog(this, "Please select an existing file.");
+                Modal.warning(this, "Please select an existing file.");
                 return;
             }
 
@@ -228,7 +227,7 @@ public class TaskDialog extends JDialog {
 
     private void save() {
         if (title.getText().trim().isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Please enter a task title.");
+            Modal.warning(this, "Please enter a task title.");
             return;
         }
 
@@ -236,7 +235,7 @@ public class TaskDialog extends JDialog {
             start.commitEdit();
             end.commitEdit();
         } catch (ParseException exception) {
-            JOptionPane.showMessageDialog(this, "Please enter a valid time.");
+            Modal.warning(this, "Please enter a valid time.");
             return;
         }
 
@@ -244,18 +243,19 @@ public class TaskDialog extends JDialog {
         LocalTime endValue = spinnerTime(end);
 
         if (!endValue.isAfter(startValue)) {
-            JOptionPane.showMessageDialog(this, "End time must be later than start time.");
+            Modal.warning(this, "End time must be later than start time.");
             return;
         }
 
         boolean needsProof = editing ? existing.isRequiresProof() : requiresProof.isSelected();
         if (needsProof && STATUS_COMPLETED.equals(status.getSelectedItem())
                 && (proof == null || !proof.isFile())) {
-            JOptionPane.showMessageDialog(this,
-                    "This task requires proof. Attach a file before marking it as Completed.");
+            Modal.warning(this,
+                    "This task requires proof.\nAttach a file before marking it as Completed.");
             return;
         }
 
+        boolean wasCompleted = editing && existing.isCompleted();
         Task t = editing ? existing : new Task();
         t.setTitle(title.getText().trim());
         t.setCategory((String) category.getSelectedItem());
@@ -270,12 +270,25 @@ public class TaskDialog extends JDialog {
         try {
             database.tasks().save(session.getAccountId(), t);
         } catch (DataAccessException exception) {
-            JOptionPane.showMessageDialog(this, exception.getMessage());
+            Modal.error(this, exception.getMessage());
             return;
         }
 
         onSaved.run();
         dispose();
+        notifySaved(t, wasCompleted);
+    }
+
+    /** Tells the user what just happened, over the main window. */
+    private void notifySaved(Task saved, boolean wasCompleted) {
+        String name = "\"" + saved.getTitle() + "\"";
+        if (saved.isCompleted() && !wasCompleted) {
+            Modal.success(getOwner(), "Task Completed", name + " is now marked as completed. Nice work!");
+        } else if (editing) {
+            Modal.success(getOwner(), "Task Updated", "Your changes to " + name + " were saved.");
+        } else {
+            Modal.success(getOwner(), "Task Created", name + " was added to your tasks.");
+        }
     }
 
     // ---------- time spinner helpers ----------
