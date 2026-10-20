@@ -18,7 +18,7 @@ public final class Database implements AutoCloseable {
     /** Relative to where the app is run (the project folder in IntelliJ). */
     public static final Path DEFAULT_FILE = Path.of("data", "daisyday.db");
 
-    private static final int SCHEMA_VERSION = 5;
+    private static final int SCHEMA_VERSION = 6;
 
     private final Connection connection;
     private final AccountRepository accounts;
@@ -104,6 +104,8 @@ public final class Database implements AutoCloseable {
                         account_id INTEGER NOT NULL
                                    REFERENCES accounts(id) ON DELETE CASCADE,
                         name       TEXT NOT NULL COLLATE NOCASE,
+                        color_index INTEGER NOT NULL DEFAULT 0,
+                        deleted_at TEXT,
                         UNIQUE (account_id, name)
                     )""");
 
@@ -126,7 +128,9 @@ public final class Database implements AutoCloseable {
                                     CHECK (requires_proof IN (0, 1)),
                         proof_path  TEXT,
                         completed_at TEXT,
-                        board_pos   INTEGER NOT NULL DEFAULT 0
+                        board_pos   INTEGER NOT NULL DEFAULT 0,
+                        archived_at TEXT,
+                        archive_reason TEXT
                     )""");
 
             // Databases created before version 2 lack the requires_proof column.
@@ -145,6 +149,26 @@ public final class Database implements AutoCloseable {
                         "UPDATE tasks SET completed_at = MIN(task_date, date('now', 'localtime')) "
                                 + "WHERE status = 'Completed'");
             }
+
+            // Version 6: the archive, and categories that can be deleted without losing their tasks.
+            //  - archived_at / archive_reason: an archived task is hidden from the app and
+            //    deleted for good after 30 days
+            //  - categories.deleted_at: a "deleted" category that still has archived tasks is kept
+            //    (hidden) so those tasks keep their category; it is removed with its last task
+            //  - categories.color_index: each category keeps its color (existing ones keep the
+            //    colors they have been shown in so far)
+            if (version >= 1 && version < 6) {
+                statement.execute("ALTER TABLE categories ADD COLUMN color_index INTEGER NOT NULL DEFAULT 0");
+                statement.execute("UPDATE categories SET color_index = (SELECT COUNT(*) FROM categories c2 "
+                        + "WHERE c2.account_id = categories.account_id AND c2.id < categories.id) % 4");
+                statement.execute("ALTER TABLE categories ADD COLUMN deleted_at TEXT");
+                statement.execute("ALTER TABLE tasks ADD COLUMN archived_at TEXT");
+                statement.execute("ALTER TABLE tasks ADD COLUMN archive_reason TEXT");
+            }
+
+            statement.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_tasks_archived
+                    ON tasks (account_id, archived_at)""");
 
             statement.execute("""
                     CREATE INDEX IF NOT EXISTS idx_tasks_account_date

@@ -39,7 +39,7 @@ public class LoginScreen extends AuthScreen {
         placeLabel("Username:", 92, 165, 90, 24, 14);
         placeLabel("Password:", 92, 205, 90, 24, 14);
 
-        username = textField(181, 166, 314);
+        username = usernameField(181, 166, 314);
         password = passwordInput(181, 206, 314);
 
         showPassword = new JCheckBox("Show password");
@@ -63,7 +63,7 @@ public class LoginScreen extends AuthScreen {
         password.getField().addActionListener(event -> handleLogin());
 
         JButton register = link(
-                "<html>don’t have an account yet? <b>register</b> now</html>"
+                "<html>don’t have an account yet? <b><u>register</u></b> now</html>"
         );
         register.setBounds(170, 339, 265, 22);
         register.addActionListener(event -> app.showScreen(Screen.REGISTER));

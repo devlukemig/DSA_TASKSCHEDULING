@@ -1,5 +1,6 @@
 package DSA1.src.daisyday.ui.components;
 
+import DSA1.src.daisyday.model.Category;
 import DSA1.src.daisyday.util.TextFormat;
 
 import javax.swing.BorderFactory;
@@ -21,6 +22,7 @@ import java.util.List;
 import java.util.function.Consumer;
 
 import static DSA1.src.daisyday.ui.Theme.HEADER;
+import static DSA1.src.daisyday.ui.Theme.categoryColor;
 
 /**
  * The category badges. Long names are shortened ("Course work...") and one
@@ -31,18 +33,11 @@ public class CategoryChips extends JScrollPane {
 
     private static final int MAX_ROWS = 3;
     private static final int NAME_LIMIT = 12;
-    private static final Color[] COLORS = {
-            new Color(244, 143, 204),
-            new Color(229, 217, 132),
-            new Color(147, 225, 157),
-            new Color(0, 175, 233)
-    };
-
     private final WrapLayout layout = new WrapLayout(8, 6);
     private final ChipPanel panel = new ChipPanel();
     private final Consumer<String> onDelete;
 
-    private List<String> names = List.of();
+    private List<Category> categories = List.of();
     private String expanded;
     private int lastHeight = -1;
 
@@ -70,9 +65,9 @@ public class CategoryChips extends JScrollPane {
         });
     }
 
-    public void setCategories(List<String> names) {
-        this.names = names;
-        if (expanded != null && !names.contains(expanded)) {
+    public void setCategories(List<Category> categories) {
+        this.categories = categories;
+        if (expanded != null && categories.stream().noneMatch(c -> c.name().equals(expanded))) {
             expanded = null;
         }
         rebuild();
@@ -101,8 +96,8 @@ public class CategoryChips extends JScrollPane {
 
     private void rebuild() {
         panel.removeAll();
-        for (int i = 0; i < names.size(); i++) {
-            panel.add(chip(names.get(i), COLORS[i % COLORS.length]));
+        for (Category category : categories) {
+            panel.add(chip(category.name(), categoryColor(category.colorIndex())));
         }
         panel.revalidate();
         panel.repaint();

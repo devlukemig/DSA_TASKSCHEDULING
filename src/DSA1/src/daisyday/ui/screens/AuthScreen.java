@@ -1,6 +1,7 @@
 package DSA1.src.daisyday.ui.screens;
 
 import DSA1.src.daisyday.ui.components.BrandIcon;
+import DSA1.src.daisyday.ui.components.LettersOnly;
 import DSA1.src.daisyday.ui.components.PasswordInput;
 
 import javax.swing.BorderFactory;
@@ -47,6 +48,13 @@ abstract class AuthScreen extends JPanel {
         field.setBackground(Color.WHITE);
         field.setBorder(BorderFactory.createEmptyBorder(1, 7, 1, 7));
         add(field);
+        return field;
+    }
+
+    /** A text field for the username: letters only. */
+    protected JTextField usernameField(int x, int y, int width) {
+        JTextField field = textField(x, y, width);
+        LettersOnly.install(field);
         return field;
     }
 

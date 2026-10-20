@@ -3,6 +3,7 @@ package DSA1.src.daisyday.data;
 import DSA1.src.daisyday.model.Task;
 
 import java.io.File;
+import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -21,12 +22,16 @@ public class TaskRepository {
 
     private static final String SELECT_TASKS =
             "SELECT t.id, t.title, c.name AS category, t.status, t.priority, "
-                    + "t.task_date, t.start_time, t.end_time, t.requires_proof, t.proof_path "
+                    + "t.task_date, t.start_time, t.end_time, t.requires_proof, t.proof_path, "
+                    + "c.color_index AS category_color, t.archived_at, t.archive_reason "
                     + "FROM tasks t JOIN categories c ON c.id = t.category_id "
                     + "WHERE t.account_id = ? ";
 
+    /** Same, but only tasks that are not in the archive. */
+    private static final String SELECT_ACTIVE = SELECT_TASKS + "AND t.archived_at IS NULL ";
+
     private static final String CATEGORY_ID =
-            "(SELECT id FROM categories WHERE account_id = ? AND name = ?)";
+            "(SELECT id FROM categories WHERE account_id = ? AND name = ? AND deleted_at IS NULL)";
 
     /** The next number on the task board: the task that gets it is shown first in its column. */
     private static final String NEXT_BOARD_POS =
@@ -87,9 +92,16 @@ public class TaskRepository {
                     + "\" to \"" + task.getStatus() + "\"");
         }
 
+        if (task.isCompleted() && task.isRequiresProof() && task.getProof() == null
+                && !Task.COMPLETED.equals(currentStatus)) {
+            throw new DataAccessException("This task requires proof before it can be completed");
+        }
+
         String sql = "UPDATE tasks SET category_id = " + CATEGORY_ID
                 + ", title = ?, status = ?, priority = ?, "
-                + "task_date = ?, start_time = ?, end_time = ?, requires_proof = ?, proof_path = ?, "
+                // a completed task keeps the proof it was completed with
+                + "task_date = ?, start_time = ?, end_time = ?, requires_proof = ?, "
+                + "proof_path = CASE WHEN status = 'Completed' THEN proof_path ELSE ? END, "
                 // keep the original completion day; clear it when the task is reopened
                 + "completed_at = CASE WHEN ? = 'Completed' THEN COALESCE(completed_at, ?) ELSE NULL END, "
                 // a task that changes status goes to the top of its new column
@@ -123,7 +135,7 @@ public class TaskRepository {
 
     /** Tasks on one day, earliest first. */
     public List<Task> findByDate(long accountId, LocalDate date) {
-        String sql = SELECT_TASKS + "AND t.task_date = ? ORDER BY t.start_time, t.id";
+        String sql = SELECT_ACTIVE + "AND t.task_date = ? ORDER BY t.start_time, t.id";
         return query(sql, accountId, date.toString());
     }
 
@@ -137,7 +149,7 @@ public class TaskRepository {
             long accountId, LocalDate date, LocalTime start, LocalTime end, Long ignoreId) {
 
         // times are stored as ISO text (09:00), so comparing the text compares the times
-        String sql = SELECT_TASKS
+        String sql = SELECT_ACTIVE
                 + "AND t.task_date = ? AND t.start_time < ? AND t.end_time > ? "
                 + "AND t.id <> ? ORDER BY t.start_time, t.id";
 
@@ -163,20 +175,152 @@ public class TaskRepository {
 
     /** Tasks with one status, newest on top (new or just-moved tasks first). */
     public List<Task> findByStatus(long accountId, String status) {
-        String sql = SELECT_TASKS + "AND t.status = ? ORDER BY t.board_pos DESC, t.id DESC";
+        String sql = SELECT_ACTIVE + "AND t.status = ? ORDER BY t.board_pos DESC, t.id DESC";
         return query(sql, accountId, status);
+    }
+
+    // ---------- archive ----------
+
+    /** Moves a task to the archive. It is deleted for good after {@link Task#ARCHIVE_DAYS} days. */
+    public void archive(long accountId, long taskId, String reason) {
+        String sql = "UPDATE tasks SET archived_at = ?, archive_reason = ? "
+                + "WHERE id = ? AND account_id = ? AND archived_at IS NULL";
+
+        try (PreparedStatement statement = database.connection().prepareStatement(sql)) {
+            statement.setString(1, LocalDate.now().toString());
+            statement.setString(2, reason);
+            statement.setLong(3, taskId);
+            statement.setLong(4, accountId);
+            statement.executeUpdate();
+        } catch (SQLException e) {
+            throw new DataAccessException("Could not archive the task", e);
+        }
+    }
+
+    /** Archived tasks, the ones that will be deleted first at the top. */
+    public List<Task> findArchived(long accountId) {
+        String sql = SELECT_TASKS + "AND t.archived_at IS NOT NULL ORDER BY t.archived_at, t.id";
+        try (PreparedStatement statement = database.connection().prepareStatement(sql)) {
+            statement.setLong(1, accountId);
+
+            List<Task> tasks = new ArrayList<>();
+            try (ResultSet result = statement.executeQuery()) {
+                while (result.next()) {
+                    tasks.add(read(result));
+                }
+            }
+            return tasks;
+        } catch (SQLException e) {
+            throw new DataAccessException("Could not load the archive", e);
+        }
+    }
+
+    public int countArchived(long accountId) {
+        return count("SELECT COUNT(*) FROM tasks WHERE account_id = ? AND archived_at IS NOT NULL", accountId);
+    }
+
+    /**
+     * Takes a task out of the archive and puts it back on top of its board column.
+     * If its category was deleted in the meantime, the category comes back too.
+     *
+     * @return the name of the category that was brought back, or null if it was never deleted
+     */
+    public String restore(long accountId, long taskId) {
+        Connection connection = database.connection();
+        try {
+            connection.setAutoCommit(false);
+            try {
+                String revived = null;
+                try (PreparedStatement find = connection.prepareStatement(
+                        "SELECT c.id, c.name FROM tasks t JOIN categories c ON c.id = t.category_id "
+                                + "WHERE t.id = ? AND t.account_id = ? AND c.deleted_at IS NOT NULL")) {
+                    find.setLong(1, taskId);
+                    find.setLong(2, accountId);
+                    try (ResultSet result = find.executeQuery()) {
+                        if (result.next()) {
+                            revived = result.getString(2);
+                            try (PreparedStatement bring = connection.prepareStatement(
+                                    "UPDATE categories SET deleted_at = NULL WHERE id = ?")) {
+                                bring.setLong(1, result.getLong(1));
+                                bring.executeUpdate();
+                            }
+                        }
+                    }
+                }
+
+                try (PreparedStatement put = connection.prepareStatement(
+                        "UPDATE tasks SET archived_at = NULL, archive_reason = NULL, board_pos = "
+                                + NEXT_BOARD_POS + " WHERE id = ? AND account_id = ?")) {
+                    put.setLong(1, taskId);
+                    put.setLong(2, accountId);
+                    put.executeUpdate();
+                }
+
+                connection.commit();
+                return revived;
+            } catch (SQLException e) {
+                connection.rollback();
+                throw e;
+            } finally {
+                connection.setAutoCommit(true);
+            }
+        } catch (SQLException e) {
+            throw new DataAccessException("Could not restore the task", e);
+        }
+    }
+
+    /** Deletes an archived task for good. Tasks that are not archived are never touched. */
+    public void deleteArchived(long accountId, long taskId) {
+        try (PreparedStatement statement = database.connection().prepareStatement(
+                "DELETE FROM tasks WHERE id = ? AND account_id = ? AND archived_at IS NOT NULL")) {
+            statement.setLong(1, taskId);
+            statement.setLong(2, accountId);
+            statement.executeUpdate();
+        } catch (SQLException e) {
+            throw new DataAccessException("Could not delete the task", e);
+        }
+        removeUnusedDeletedCategories();
+    }
+
+    /**
+     * Deletes every task (of every account) that has been in the archive for
+     * {@link Task#ARCHIVE_DAYS} days or more. Returns how many were deleted.
+     */
+    public int purgeExpired(LocalDate today) {
+        int deleted;
+        try (PreparedStatement statement = database.connection().prepareStatement(
+                "DELETE FROM tasks WHERE archived_at IS NOT NULL AND archived_at <= ?")) {
+            statement.setString(1, today.minusDays(Task.ARCHIVE_DAYS).toString());
+            deleted = statement.executeUpdate();
+        } catch (SQLException e) {
+            throw new DataAccessException("Could not clean up the archive", e);
+        }
+        if (deleted > 0) {
+            removeUnusedDeletedCategories();
+        }
+        return deleted;
+    }
+
+    /** A deleted category is only kept while archived tasks still belong to it. */
+    private void removeUnusedDeletedCategories() {
+        try (Statement statement = database.connection().createStatement()) {
+            statement.executeUpdate("DELETE FROM categories WHERE deleted_at IS NOT NULL "
+                    + "AND NOT EXISTS (SELECT 1 FROM tasks WHERE tasks.category_id = categories.id)");
+        } catch (SQLException e) {
+            throw new DataAccessException("Could not clean up the categories", e);
+        }
     }
 
     // ---------- counts ----------
 
     public int countAll(long accountId) {
-        return count("SELECT COUNT(*) FROM tasks WHERE account_id = ?", accountId);
+        return count("SELECT COUNT(*) FROM tasks WHERE account_id = ? AND archived_at IS NULL", accountId);
     }
 
     /** Tasks on that day that are not completed yet. */
     public int countDue(long accountId, LocalDate date) {
         return count(
-                "SELECT COUNT(*) FROM tasks WHERE account_id = ? "
+                "SELECT COUNT(*) FROM tasks WHERE account_id = ? AND archived_at IS NULL "
                         + "AND task_date = ? AND status <> 'Completed'",
                 accountId, date.toString()
         );
@@ -185,7 +329,7 @@ public class TaskRepository {
     /** Tasks that are not completed and were due before today. */
     public int countOverdue(long accountId, LocalDate today) {
         return count(
-                "SELECT COUNT(*) FROM tasks WHERE account_id = ? "
+                "SELECT COUNT(*) FROM tasks WHERE account_id = ? AND archived_at IS NULL "
                         + "AND status <> 'Completed' AND task_date < ?",
                 accountId, today.toString()
         );
@@ -194,7 +338,7 @@ public class TaskRepository {
     /** Tasks that are not completed and are due from one day to another (inclusive). */
     public int countIncompleteBetween(long accountId, LocalDate from, LocalDate to) {
         return count(
-                "SELECT COUNT(*) FROM tasks WHERE account_id = ? "
+                "SELECT COUNT(*) FROM tasks WHERE account_id = ? AND archived_at IS NULL "
                         + "AND status <> 'Completed' AND task_date BETWEEN ? AND ?",
                 accountId, from.toString(), to.toString()
         );
@@ -203,7 +347,7 @@ public class TaskRepository {
     /** Number of tasks with each status (statuses with no tasks are left out). */
     public Map<String, Integer> countsByStatus(long accountId) {
         return groupedCounts(
-                "SELECT status, COUNT(*) FROM tasks WHERE account_id = ? GROUP BY status",
+                "SELECT status, COUNT(*) FROM tasks WHERE account_id = ? AND archived_at IS NULL GROUP BY status",
                 accountId
         );
     }
@@ -213,13 +357,16 @@ public class TaskRepository {
         return groupedCounts(
                 "SELECT c.name, COUNT(*) AS total FROM tasks t "
                         + "JOIN categories c ON c.id = t.category_id "
-                        + "WHERE t.account_id = ? GROUP BY c.id "
+                        + "WHERE t.account_id = ? AND t.archived_at IS NULL GROUP BY c.id "
                         + "ORDER BY total DESC, c.name",
                 accountId
         );
     }
 
-    /** Tasks completed on each day from one day to another (days with none are left out). */
+    /**
+     * Tasks completed on each day from one day to another (days with none are left out).
+     * Archived tasks still count: archiving a finished task must not undo the work.
+     */
     public Map<LocalDate, Integer> completedPerDay(long accountId, LocalDate from, LocalDate to) {
         String sql = "SELECT completed_at, COUNT(*) FROM tasks WHERE account_id = ? "
                 + "AND status = 'Completed' AND completed_at BETWEEN ? AND ? "
@@ -245,7 +392,7 @@ public class TaskRepository {
 
     /** Number of tasks on each day of the month (days with none are left out). */
     public Map<LocalDate, Integer> countsByDay(long accountId, YearMonth month) {
-        String sql = "SELECT task_date, COUNT(*) FROM tasks WHERE account_id = ? "
+        String sql = "SELECT task_date, COUNT(*) FROM tasks WHERE account_id = ? AND archived_at IS NULL "
                 + "AND task_date BETWEEN ? AND ? GROUP BY task_date";
 
         try (PreparedStatement statement = database.connection().prepareStatement(sql)) {
@@ -350,6 +497,10 @@ public class TaskRepository {
         task.setEnd(LocalTime.parse(result.getString("end_time")));
 
         task.setRequiresProof(result.getInt("requires_proof") == 1);
+        task.setCategoryColor(result.getInt("category_color"));
+        String archivedAt = result.getString("archived_at");
+        task.setArchivedAt(archivedAt == null ? null : LocalDate.parse(archivedAt));
+        task.setArchiveReason(result.getString("archive_reason"));
 
         String proof = result.getString("proof_path");
         task.setProof(proof == null ? null : new File(proof));

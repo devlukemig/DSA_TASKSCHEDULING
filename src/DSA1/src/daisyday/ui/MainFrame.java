@@ -5,6 +5,7 @@ import DSA1.src.daisyday.data.Database;
 import DSA1.src.daisyday.model.Task;
 import DSA1.src.daisyday.ui.dialogs.Modal;
 import DSA1.src.daisyday.ui.dialogs.TaskDialog;
+import DSA1.src.daisyday.ui.screens.ArchivePage;
 import DSA1.src.daisyday.ui.screens.CalendarPage;
 import DSA1.src.daisyday.ui.screens.DashboardPage;
 import DSA1.src.daisyday.ui.screens.LoginScreen;
@@ -16,6 +17,7 @@ import javax.swing.JFrame;
 import javax.swing.JPanel;
 import java.awt.CardLayout;
 import java.awt.Dimension;
+import java.time.LocalDate;
 
 /** The app window. Owns the state and switches between screens. */
 public class MainFrame extends JFrame implements AppController {
@@ -29,6 +31,7 @@ public class MainFrame extends JFrame implements AppController {
     private final DashboardPage dashboardPage;
     private final TasksPage tasksPage;
     private final CalendarPage calendarPage;
+    private final ArchivePage archivePage;
 
     public MainFrame(Database database) {
         this.database = database;
@@ -41,12 +44,14 @@ public class MainFrame extends JFrame implements AppController {
         dashboardPage = new DashboardPage(session, database, this);
         tasksPage = new TasksPage(session, database, this);
         calendarPage = new CalendarPage(session, database, this);
+        archivePage = new ArchivePage(session, database, this);
 
         screens.add(loginScreen, Screen.LOGIN.name());
         screens.add(new RegistrationScreen(database, this, loginScreen), Screen.REGISTER.name());
         screens.add(new WorkspaceScreen(Screen.DASHBOARD, this, dashboardPage), Screen.DASHBOARD.name());
         screens.add(new WorkspaceScreen(Screen.TASKS, this, tasksPage), Screen.TASKS.name());
         screens.add(new WorkspaceScreen(Screen.CALENDAR, this, calendarPage), Screen.CALENDAR.name());
+        screens.add(new WorkspaceScreen(Screen.ARCHIVE, this, archivePage), Screen.ARCHIVE.name());
 
         setContentPane(screens);
         refreshAll();
@@ -60,7 +65,7 @@ public class MainFrame extends JFrame implements AppController {
         screens.setPreferredSize(
                 screen.isAuthentication()
                         ? new Dimension(594, 415)
-                        : new Dimension(920, 500)
+                        : new Dimension(920, 560)
         );
 
         pack();
@@ -70,9 +75,12 @@ public class MainFrame extends JFrame implements AppController {
     @Override
     public void refreshAll() {
         try {
+            // archived tasks are deleted for good once they have been there for 30 days
+            database.tasks().purgeExpired(LocalDate.now());
             dashboardPage.refresh();
             tasksPage.refresh();
             calendarPage.refresh();
+            archivePage.refresh();
         } catch (DataAccessException e) {
             error(e.getMessage());
         }

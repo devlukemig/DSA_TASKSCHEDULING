@@ -5,6 +5,10 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import DSA1.src.daisyday.model.Category;
+import DSA1.src.daisyday.model.Task;
+
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.OptionalInt;
@@ -83,28 +87,39 @@ public class AccountRepository {
         }
     }
 
+    /** Names of the categories the user has (deleted ones are not included). */
     public List<String> findCategories(long accountId) {
-        String sql = "SELECT name FROM categories WHERE account_id = ? ORDER BY id";
+        List<String> names = new ArrayList<>();
+        for (Category category : findCategoryList(accountId)) {
+            names.add(category.name());
+        }
+        return names;
+    }
+
+    /** The categories with their colors, in the order they were created. */
+    public List<Category> findCategoryList(long accountId) {
+        String sql = "SELECT name, color_index FROM categories "
+                + "WHERE account_id = ? AND deleted_at IS NULL ORDER BY id";
 
         try (PreparedStatement statement = database.connection().prepareStatement(sql)) {
             statement.setLong(1, accountId);
 
-            List<String> names = new ArrayList<>();
+            List<Category> categories = new ArrayList<>();
             try (ResultSet result = statement.executeQuery()) {
                 while (result.next()) {
-                    names.add(result.getString("name"));
+                    categories.add(new Category(result.getString("name"), result.getInt("color_index")));
                 }
             }
-            return names;
+            return categories;
 
         } catch (SQLException e) {
             throw new DataAccessException("Could not load the categories", e);
         }
     }
 
-    /** Case-insensitive. */
+    /** Case-insensitive. Deleted categories do not count. */
     public boolean categoryExists(long accountId, String name) {
-        String sql = "SELECT 1 FROM categories WHERE account_id = ? AND name = ?";
+        String sql = "SELECT 1 FROM categories WHERE account_id = ? AND name = ? AND deleted_at IS NULL";
 
         try (PreparedStatement statement = database.connection().prepareStatement(sql)) {
             statement.setLong(1, accountId);
@@ -117,18 +132,33 @@ public class AccountRepository {
         }
     }
 
+    /**
+     * Adds a category. If a category with this name was deleted earlier (and still has
+     * archived tasks), that one comes back with its old color and its archived tasks.
+     */
     public void addCategory(long accountId, String name) {
         try {
+            try (PreparedStatement revive = database.connection().prepareStatement(
+                    "UPDATE categories SET deleted_at = NULL, name = ? "
+                            + "WHERE account_id = ? AND name = ? AND deleted_at IS NOT NULL")) {
+                revive.setString(1, name);
+                revive.setLong(2, accountId);
+                revive.setString(3, name);
+                if (revive.executeUpdate() > 0) {
+                    return;
+                }
+            }
             insertCategory(database.connection(), accountId, name);
         } catch (SQLException e) {
             throw new DataAccessException("Could not save the category", e);
         }
     }
 
-    /** How many tasks are filed under this category. */
+    /** How many tasks (not counting archived ones) are filed under this category. */
     public int countTasksInCategory(long accountId, String name) {
         String sql = "SELECT COUNT(*) FROM tasks t JOIN categories c ON c.id = t.category_id "
-                + "WHERE t.account_id = ? AND c.name = ?";
+                + "WHERE t.account_id = ? AND c.name = ? AND c.deleted_at IS NULL "
+                + "AND t.archived_at IS NULL";
 
         try (PreparedStatement statement = database.connection().prepareStatement(sql)) {
             statement.setLong(1, accountId);
@@ -142,28 +172,53 @@ public class AccountRepository {
         }
     }
 
-    /** Deletes the category and every task filed under it. */
-    public void deleteCategory(long accountId, String name) {
+    /**
+     * Deletes a category. Its tasks are not lost: they move to the archive (and are deleted
+     * for good after 30 days unless restored). A category that still has archived tasks is
+     * only hidden, so those tasks keep their category; an empty one is removed completely.
+     *
+     * @return how many tasks were moved to the archive
+     */
+    public int deleteCategory(long accountId, String name) {
         Connection connection = database.connection();
-        String deleteTasks = "DELETE FROM tasks WHERE account_id = ? AND category_id = "
-                + "(SELECT id FROM categories WHERE account_id = ? AND name = ?)";
-        String deleteCategory = "DELETE FROM categories WHERE account_id = ? AND name = ?";
+        String today = LocalDate.now().toString();
+        String categoryId = "(SELECT id FROM categories WHERE account_id = ? AND name = ? AND deleted_at IS NULL)";
 
         try {
             connection.setAutoCommit(false);
-            try (PreparedStatement tasks = connection.prepareStatement(deleteTasks);
-                 PreparedStatement category = connection.prepareStatement(deleteCategory)) {
+            try {
+                int archived;
+                try (PreparedStatement move = connection.prepareStatement(
+                        "UPDATE tasks SET archived_at = ?, archive_reason = ? "
+                                + "WHERE account_id = ? AND archived_at IS NULL AND category_id = " + categoryId)) {
+                    move.setString(1, today);
+                    move.setString(2, Task.ARCHIVED_BY_CATEGORY);
+                    move.setLong(3, accountId);
+                    move.setLong(4, accountId);
+                    move.setString(5, name);
+                    archived = move.executeUpdate();
+                }
 
-                tasks.setLong(1, accountId);
-                tasks.setLong(2, accountId);
-                tasks.setString(3, name);
-                tasks.executeUpdate();
+                // keep the category (hidden) while any archived task still belongs to it
+                try (PreparedStatement hide = connection.prepareStatement(
+                        "UPDATE categories SET deleted_at = ? WHERE account_id = ? AND name = ? "
+                                + "AND deleted_at IS NULL AND EXISTS "
+                                + "(SELECT 1 FROM tasks WHERE tasks.category_id = categories.id)");
+                     PreparedStatement remove = connection.prepareStatement(
+                             "DELETE FROM categories WHERE account_id = ? AND name = ? AND deleted_at IS NULL "
+                                     + "AND NOT EXISTS (SELECT 1 FROM tasks WHERE tasks.category_id = categories.id)")) {
+                    hide.setString(1, today);
+                    hide.setLong(2, accountId);
+                    hide.setString(3, name);
+                    hide.executeUpdate();
 
-                category.setLong(1, accountId);
-                category.setString(2, name);
-                category.executeUpdate();
+                    remove.setLong(1, accountId);
+                    remove.setString(2, name);
+                    remove.executeUpdate();
+                }
 
                 connection.commit();
+                return archived;
             } catch (SQLException e) {
                 connection.rollback();
                 throw e;
@@ -238,11 +293,36 @@ public class AccountRepository {
     private static void insertCategory(Connection connection, long accountId, String name)
             throws SQLException {
 
-        String sql = "INSERT INTO categories (account_id, name) VALUES (?, ?)";
+        String sql = "INSERT INTO categories (account_id, name, color_index) VALUES (?, ?, ?)";
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setLong(1, accountId);
             statement.setString(2, name);
+            statement.setInt(3, leastUsedColor(connection, accountId));
             statement.executeUpdate();
         }
+    }
+
+    /** The category color that the fewest of the user's categories use (the first one on a tie). */
+    private static int leastUsedColor(Connection connection, long accountId) throws SQLException {
+        int[] used = new int[Category.PALETTE_SIZE];
+        String sql = "SELECT color_index, COUNT(*) FROM categories "
+                + "WHERE account_id = ? AND deleted_at IS NULL GROUP BY color_index";
+
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setLong(1, accountId);
+            try (ResultSet result = statement.executeQuery()) {
+                while (result.next()) {
+                    used[Math.floorMod(result.getInt(1), used.length)] += result.getInt(2);
+                }
+            }
+        }
+
+        int best = 0;
+        for (int i = 1; i < used.length; i++) {
+            if (used[i] < used[best]) {
+                best = i;
+            }
+        }
+        return best;
     }
 }

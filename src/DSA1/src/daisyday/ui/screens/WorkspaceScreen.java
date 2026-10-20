@@ -52,6 +52,8 @@ public class WorkspaceScreen extends JPanel {
         ));
         sidebar.add(Box.createVerticalStrut(10));
         sidebar.add(menu("CALENDAR VIEW", Screen.CALENDAR));
+        sidebar.add(Box.createVerticalStrut(10));
+        sidebar.add(menu("ARCHIVE", Screen.ARCHIVE));
         sidebar.add(Box.createVerticalGlue());
 
         JButton logout = button("LOG OUT");

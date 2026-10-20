@@ -4,6 +4,7 @@ import DSA1.src.daisyday.data.DataAccessException;
 import DSA1.src.daisyday.data.Database;
 import DSA1.src.daisyday.ui.AppController;
 import DSA1.src.daisyday.ui.Screen;
+import DSA1.src.daisyday.ui.components.LettersOnly;
 import DSA1.src.daisyday.ui.components.PasswordInput;
 
 import javax.swing.JButton;
@@ -41,7 +42,7 @@ public class RegistrationScreen extends AuthScreen {
         placeLabel("Username:", 124, 158, 160, 24, 14);
         placeLabel("Password:", 124, 212, 160, 24, 14);
 
-        username = textField(169, 180, 314);
+        username = usernameField(169, 180, 314);
         password = passwordInput(169, 235, 314);
 
         JLabel hint = new JLabel("Minimum 8 characters");
@@ -76,8 +77,8 @@ public class RegistrationScreen extends AuthScreen {
         returnText.setForeground(MAROON);
         returnText.setFont(new Font("SansSerif", Font.PLAIN, 12));
 
-        // Bold Login, no underline, still clickable.
-        JButton loginLink = link("Login");
+        // Bold, underlined Login that is clickable.
+        JButton loginLink = link("<html><b><u>Login</u></b></html>");
         loginLink.setFont(new Font("SansSerif", Font.BOLD, 12));
         loginLink.addActionListener(event -> {
             password.clearAndHide();
@@ -99,6 +100,12 @@ public class RegistrationScreen extends AuthScreen {
         try {
             if (name.isEmpty() || first.length == 0 || second.length == 0) {
                 app.warn("Please fill out all fields.");
+                return;
+            }
+
+            if (!LettersOnly.isValid(name)) {
+                app.warn("Username can only contain letters.");
+                username.requestFocusInWindow();
                 return;
             }
 

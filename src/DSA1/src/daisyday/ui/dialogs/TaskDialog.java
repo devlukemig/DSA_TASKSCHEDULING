@@ -11,15 +11,10 @@ import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JDialog;
-import javax.swing.JFileChooser;
-import javax.swing.JLabel;
-import javax.swing.JMenuItem;
 import javax.swing.JPanel;
-import javax.swing.JPopupMenu;
 import javax.swing.JSpinner;
 import javax.swing.JTextField;
 import javax.swing.SpinnerDateModel;
-import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.FlowLayout;
@@ -35,6 +30,7 @@ import java.time.ZoneId;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
+import java.util.Objects;
 
 import static DSA1.src.daisyday.ui.UiFactory.button;
 import static DSA1.src.daisyday.ui.UiFactory.label;
@@ -59,10 +55,9 @@ public class TaskDialog extends JDialog {
     private final JSpinner start;
     private final JSpinner end;
     private final JCheckBox requiresProof = new JCheckBox("This task requires proof");
-    private final JLabel proofName = new JLabel();
+    private final ProofCard proofCard; // only for tasks that require proof
 
     private LocalDate date;
-    private File proof;
 
     /**
      * @param existing the task to edit, or null to create a new one
@@ -79,7 +74,6 @@ public class TaskDialog extends JDialog {
         this.onSaved = onSaved;
 
         this.date = editing ? existing.getDate() : LocalDate.now();
-        this.proof = editing ? existing.getProof() : null;
 
         title = new JTextField(editing ? existing.getTitle() : "", 23);
         category = new JComboBox<>(
@@ -109,7 +103,16 @@ public class TaskDialog extends JDialog {
         requiresProof.setSelected(editing && existing.isRequiresProof());
         requiresProof.setBackground(Color.WHITE);
 
-        proofName.setText(proof == null ? "No proof attached" : proof.getName());
+        // A completed task keeps the proof it was completed with: it can be viewed, not changed.
+        proofCard = editing && existing.isRequiresProof()
+                ? new ProofCard(this, existing.isCompleted(), existing.getProof())
+                : null;
+        if (proofCard != null) {
+            proofCard.setChangeListener(file -> {
+                pack(); // the card is taller with a file attached
+                setLocationRelativeTo(getOwner());
+            });
+        }
 
         JPanel root = section(getTitle(), buildForm());
         root.add(buildActions(), BorderLayout.SOUTH);
@@ -141,32 +144,26 @@ public class TaskDialog extends JDialog {
         // Attaching the proof happens afterwards, in the task details.
         if (!editing) {
             formRow(form, 7, "Proof", requiresProof);
-        } else if (existing.isRequiresProof()) {
-            formRow(form, 7, "Attachment", buildProofPanel());
+        } else if (proofCard != null) {
+            proofRow(form, 7);
         }
         return form;
     }
 
-    private JPanel buildProofPanel() {
-        JButton attach = button("Attach Proof Here");
-        JPopupMenu options = new JPopupMenu();
+    /** The proof card, with its label at the top left instead of centered. */
+    private void proofRow(JPanel form, int row) {
+        GridBagConstraints c = new GridBagConstraints();
+        c.gridx = 0;
+        c.gridy = row;
+        c.anchor = GridBagConstraints.NORTHWEST;
+        c.insets = new Insets(10, 0, 6, 12);
+        form.add(label("Proof", 13), c);
 
-        JMenuItem file = new JMenuItem("Attach File");
-        JMenuItem photo = new JMenuItem("Photo Library");
-        file.addActionListener(event -> chooseProof(false));
-        photo.addActionListener(event -> chooseProof(true));
-
-        options.add(file);
-        options.add(photo);
-        attach.addActionListener(event ->
-                options.show(attach, 0, attach.getHeight())
-        );
-
-        JPanel proofPanel = new JPanel(new BorderLayout(5, 5));
-        proofPanel.setBackground(Color.WHITE);
-        proofPanel.add(attach, BorderLayout.NORTH);
-        proofPanel.add(proofName, BorderLayout.CENTER);
-        return proofPanel;
+        c.gridx = 1;
+        c.weightx = 1;
+        c.fill = GridBagConstraints.HORIZONTAL;
+        c.insets = new Insets(6, 0, 6, 0);
+        form.add(proofCard, c);
     }
 
     private JPanel buildActions() {
@@ -180,7 +177,45 @@ public class TaskDialog extends JDialog {
         actions.setBackground(Color.WHITE);
         actions.add(cancel);
         actions.add(save);
-        return actions;
+
+        JPanel bar = new JPanel(new BorderLayout());
+        bar.setBackground(Color.WHITE);
+        bar.add(actions, BorderLayout.EAST);
+
+        if (editing) {
+            JButton archive = Modal.secondaryButton("Archive");
+            archive.setToolTipText("Move this task to the archive");
+            archive.addActionListener(event -> archive());
+
+            JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT));
+            left.setBackground(Color.WHITE);
+            left.add(archive);
+            bar.add(left, BorderLayout.WEST);
+        }
+        return bar;
+    }
+
+    /** Moves the task to the archive after asking. It can be restored from the Archive page. */
+    private void archive() {
+        String name = "\"" + existing.getTitle() + "\"";
+        if (!Modal.confirm(this, "Archive Task",
+                "Move " + name + " to the archive?\nIt stays there for " + Task.ARCHIVE_DAYS
+                        + " days and is then deleted permanently. You can restore it before that.",
+                "Archive", false)) {
+            return;
+        }
+
+        try {
+            database.tasks().archive(session.getAccountId(), existing.getId(), Task.ARCHIVED_BY_USER);
+        } catch (DataAccessException exception) {
+            Modal.error(this, exception.getMessage());
+            return;
+        }
+
+        onSaved.run();
+        dispose();
+        Modal.success(getOwner(), "Task Archived",
+                name + " was moved to the archive. You can restore it from the Archive page.");
     }
 
     private void formRow(JPanel form, int row, String text, JComponent input) {
@@ -212,27 +247,6 @@ public class TaskDialog extends JDialog {
         }
     }
 
-    private void chooseProof(boolean imagesOnly) {
-        JFileChooser chooser = new JFileChooser();
-        if (imagesOnly) {
-            chooser.setAcceptAllFileFilterUsed(false);
-            chooser.setFileFilter(new FileNameExtensionFilter(
-                    "Images", "png", "jpg", "jpeg", "gif"
-            ));
-        }
-
-        if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
-            File selected = chooser.getSelectedFile();
-            if (!selected.isFile()) {
-                Modal.warning(this, "Please select an existing file.");
-                return;
-            }
-
-            proof = selected;
-            proofName.setText(selected.getName());
-        }
-    }
-
     private void save() {
         if (editing) {
             updateStatus();
@@ -244,20 +258,29 @@ public class TaskDialog extends JDialog {
     /** Task details: only the status (and the proof, if the task needs one) can change. */
     private void updateStatus() {
         String newStatus = (String) status.getSelectedItem();
+        File newProof = existing.isRequiresProof() && proofCard != null ? proofCard.getFile() : null;
+
+        boolean statusChanged = !newStatus.equals(existing.getStatus());
+        boolean proofChanged = !Objects.equals(newProof, existing.getProof());
+
+        if (!statusChanged && !proofChanged) {
+            Modal.info(this, "No Changes",
+                    "You haven't changed anything, so there is nothing to save.");
+            return;
+        }
 
         if (existing.isRequiresProof() && STATUS_COMPLETED.equals(newStatus)
-                && (proof == null || !proof.isFile())) {
+                && (newProof == null || !newProof.isFile())) {
             Modal.warning(this,
                     "This task requires proof.\nAttach a file before marking it as Completed.");
             return;
         }
 
-        boolean wasCompleted = existing.isCompleted();
         String oldStatus = existing.getStatus();
         File oldProof = existing.getProof();
 
         existing.setStatus(newStatus);
-        existing.setProof(existing.isRequiresProof() ? proof : null);
+        existing.setProof(newProof);
 
         try {
             database.tasks().save(session.getAccountId(), existing);
@@ -270,7 +293,15 @@ public class TaskDialog extends JDialog {
 
         onSaved.run();
         dispose();
-        notifySaved(existing, wasCompleted);
+
+        String name = "\"" + existing.getTitle() + "\"";
+        if (statusChanged && existing.isCompleted()) {
+            Modal.success(getOwner(), "Task Completed", name + " is now marked as completed. Nice work!");
+        } else if (statusChanged) {
+            Modal.success(getOwner(), "Task Updated", name + " is now " + newStatus + ".");
+        } else {
+            Modal.success(getOwner(), "Proof Saved", "The proof for " + name + " was saved.");
+        }
     }
 
     private void createTask() {
@@ -308,7 +339,7 @@ public class TaskDialog extends JDialog {
         t.setStart(startValue);
         t.setEnd(endValue);
         t.setRequiresProof(requiresProof.isSelected());
-        t.setProof(requiresProof.isSelected() ? proof : null);
+        t.setProof(null); // proof is attached afterwards, in the task details
 
         try {
             database.tasks().save(session.getAccountId(), t);
